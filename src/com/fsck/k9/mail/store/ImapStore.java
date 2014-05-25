@@ -25,7 +25,6 @@ import java.nio.charset.Charset;
 import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CodingErrorAction;
 import java.security.GeneralSecurityException;
-import java.security.SecureRandom;
 import java.security.Security;
 import java.security.cert.CertificateException;
 import java.text.SimpleDateFormat;
@@ -50,9 +49,8 @@ import java.util.regex.Pattern;
 import java.util.zip.Inflater;
 import java.util.zip.InflaterInputStream;
 
-import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLException;
-import javax.net.ssl.TrustManager;
+import javax.net.ssl.SSLHandshakeException;
 
 import org.apache.commons.io.IOUtils;
 
@@ -76,6 +74,7 @@ import com.fsck.k9.mail.Authentication;
 import com.fsck.k9.mail.AuthenticationFailedException;
 import com.fsck.k9.mail.Body;
 import com.fsck.k9.mail.CertificateValidationException;
+import com.fsck.k9.mail.ClientCertificateRequiredException;
 import com.fsck.k9.mail.ConnectionSecurity;
 import com.fsck.k9.mail.FetchProfile;
 import com.fsck.k9.mail.Flag;
@@ -100,8 +99,7 @@ import com.fsck.k9.mail.store.ImapResponseParser.ImapList;
 import com.fsck.k9.mail.store.ImapResponseParser.ImapResponse;
 import com.fsck.k9.mail.store.imap.ImapUtility;
 import com.fsck.k9.mail.transport.imap.ImapSettings;
-import com.fsck.k9.net.ssl.TrustManagerFactory;
-import com.fsck.k9.net.ssl.TrustedSocketFactory;
+import com.fsck.k9.net.ssl.SslHelper;
 import com.jcraft.jzlib.JZlib;
 import com.jcraft.jzlib.ZOutputStream;
 
@@ -126,6 +124,7 @@ public class ImapStore extends Store {
     private static final String CAPABILITY_IDLE = "IDLE";
     private static final String CAPABILITY_AUTH_CRAM_MD5 = "AUTH=CRAM-MD5";
     private static final String CAPABILITY_AUTH_PLAIN = "AUTH=PLAIN";
+    private static final String CAPABILITY_AUTH_EXTERNAL = "AUTH=EXTERNAL";
     private static final String CAPABILITY_LOGINDISABLED = "LOGINDISABLED";
     private static final String COMMAND_IDLE = "IDLE";
     private static final String CAPABILITY_NAMESPACE = "NAMESPACE";
@@ -348,6 +347,7 @@ public class ImapStore extends Store {
     private int mPort;
     private String mUsername;
     private String mPassword;
+    private String mClientCertificateAlias;
     private ConnectionSecurity mConnectionSecurity;
     private AuthType mAuthType;
     private volatile String mPathPrefix;
@@ -384,6 +384,11 @@ public class ImapStore extends Store {
         @Override
         public String getPassword() {
             return mPassword;
+        }
+
+        @Override
+        public String getClientCertificateAlias() {
+            return mClientCertificateAlias;
         }
 
         @Override
@@ -2419,14 +2424,8 @@ public class ImapStore extends Store {
                                 mSettings.getPort());
 
                         if (connectionSecurity == ConnectionSecurity.SSL_TLS_REQUIRED) {
-                            SSLContext sslContext = SSLContext.getInstance("TLS");
-                            sslContext
-                                    .init(null,
-                                            new TrustManager[] { TrustManagerFactory.get(
-                                                    mSettings.getHost(),
-                                                    mSettings.getPort()) },
-                                            new SecureRandom());
-                            mSocket = TrustedSocketFactory.createSocket(sslContext);
+                            mSocket = SslHelper.createSslSocket(mSettings.getHost(), 
+                                    mSettings.getPort(), mSettings.getClientCertificateAlias());
                         } else {
                             mSocket = new Socket();
                         }
@@ -2475,14 +2474,9 @@ public class ImapStore extends Store {
                         // STARTTLS
                         executeSimpleCommand("STARTTLS");
 
-                        SSLContext sslContext = SSLContext.getInstance("TLS");
-                        sslContext.init(null,
-                                new TrustManager[] { TrustManagerFactory.get(
-                                        mSettings.getHost(),
-                                        mSettings.getPort()) },
-                                new SecureRandom());
-                        mSocket = TrustedSocketFactory.createSocket(sslContext, mSocket,
-                                mSettings.getHost(), mSettings.getPort(), true);
+                        mSocket = SslHelper.createStartTlsSocket(mSocket, 
+                                mSettings.getHost(), mSettings.getPort(), true, 
+                                mSettings.getClientCertificateAlias());
                         mSocket.setSoTimeout(Store.SOCKET_READ_TIMEOUT);
                         mIn = new PeekableInputStream(new BufferedInputStream(mSocket
                                                       .getInputStream(), 1024));
@@ -2529,6 +2523,17 @@ public class ImapStore extends Store {
                         throw new MessagingException(
                                 "Server doesn't support unencrypted passwords using AUTH=PLAIN and LOGIN is disabled.");
                     }
+                    break;
+
+                case EXTERNAL:
+                        if (hasCapability(CAPABILITY_AUTH_EXTERNAL)) {
+                            executeSimpleCommand(
+                                    String.format("AUTHENTICATE EXTERNAL %s",
+                                            Utility.base64Encode(mSettings.getUsername())), false);
+                        } else {
+                            throw new MessagingException(
+                                    "EXTERNAL authentication not advertised by server");
+                        }
                     break;
 
                 default:
@@ -2630,7 +2635,8 @@ public class ImapStore extends Store {
                     }
                 }
 
-
+            } catch (SSLHandshakeException e) {    
+                throw new ClientCertificateRequiredException(e);
             } catch (SSLException e) {
                 throw new CertificateValidationException(e.getMessage(), e);
             } catch (GeneralSecurityException gse) {

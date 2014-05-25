@@ -13,6 +13,7 @@ import android.view.View.OnClickListener;
 import android.view.ViewGroup;
 import android.widget.*;
 import android.widget.CompoundButton.OnCheckedChangeListener;
+
 import com.fsck.k9.*;
 import com.fsck.k9.activity.K9Activity;
 import com.fsck.k9.activity.setup.AccountSetupCheckSettings.CheckDirection;
@@ -22,6 +23,7 @@ import com.fsck.k9.mail.ConnectionSecurity;
 import com.fsck.k9.mail.ServerSettings;
 import com.fsck.k9.mail.Transport;
 import com.fsck.k9.mail.transport.SmtpTransport;
+import com.fsck.k9.net.ssl.SslHelper;
 
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -77,7 +79,7 @@ public class AccountSetupOutgoing extends K9Activity implements OnClickListener,
         try {
             if (new URI(mAccount.getStoreUri()).getScheme().startsWith("webdav")) {
                 mAccount.setTransportUri(mAccount.getStoreUri());
-                AccountSetupCheckSettings.actionCheckSettings(this, mAccount, CheckDirection.OUTGOING);
+                AccountSetupCheckSettings.actionCheckSettings(this, mAccount, CheckDirection.OUTGOING, false);
             }
         } catch (URISyntaxException e) {
             // TODO Auto-generated catch block
@@ -98,12 +100,9 @@ public class AccountSetupOutgoing extends K9Activity implements OnClickListener,
         mNextButton.setOnClickListener(this);
         mRequireLoginView.setOnCheckedChangeListener(this);
 
-        ArrayAdapter<ConnectionSecurity> securityTypesAdapter = new ArrayAdapter<ConnectionSecurity>(this,
-                android.R.layout.simple_spinner_item, ConnectionSecurity.values());
-        securityTypesAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        mSecurityTypeView.setAdapter(securityTypesAdapter);
+        mSecurityTypeView.setAdapter(ConnectionSecurity.getArrayAdapter(this));
 
-        mAuthTypeAdapter = AuthType.getArrayAdapter(this);
+        mAuthTypeAdapter = AuthType.getArrayAdapter(this, SslHelper.isClientCertificateSupportAvailable());
         mAuthTypeView.setAdapter(mAuthTypeAdapter);
 
         /*
@@ -290,7 +289,7 @@ public class AccountSetupOutgoing extends K9Activity implements OnClickListener,
         uri = Transport.createTransportUri(server);
         mAccount.deleteCertificate(newHost, newPort, CheckDirection.OUTGOING);
         mAccount.setTransportUri(uri);
-        AccountSetupCheckSettings.actionCheckSettings(this, mAccount, CheckDirection.OUTGOING);
+        AccountSetupCheckSettings.actionCheckSettings(this, mAccount, CheckDirection.OUTGOING, false);
     }
 
     public void onClick(View v) {

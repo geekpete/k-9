@@ -8,23 +8,19 @@ import com.fsck.k9.K9;
 import com.fsck.k9.controller.MessageRetrievalListener;
 import com.fsck.k9.helper.Utility;
 import com.fsck.k9.mail.*;
-
 import com.fsck.k9.mail.filter.Base64;
 import com.fsck.k9.mail.filter.Hex;
 import com.fsck.k9.mail.internet.MimeMessage;
-import com.fsck.k9.net.ssl.TrustManagerFactory;
-import com.fsck.k9.net.ssl.TrustedSocketFactory;
+import com.fsck.k9.net.ssl.SslHelper;
 
-import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLException;
-import javax.net.ssl.TrustManager;
+import javax.net.ssl.SSLHandshakeException;
 
 import java.io.*;
 import java.net.*;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
 import java.security.cert.CertificateException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -59,6 +55,7 @@ public class Pop3Store extends Store {
     private static final String SASL_CAPABILITY = "SASL";
     private static final String AUTH_PLAIN_CAPABILITY = "PLAIN";
     private static final String AUTH_CRAM_MD5_CAPABILITY = "CRAM-MD5";
+    private static final String AUTH_EXTERNAL_CAPABILITY = "EXTERNAL";
 
     /**
      * Decodes a Pop3Store URI.
@@ -194,6 +191,7 @@ public class Pop3Store extends Store {
     private int mPort;
     private String mUsername;
     private String mPassword;
+    private String mClientCertificateAlias;
     private AuthType mAuthType;
     private ConnectionSecurity mConnectionSecurity;
     private HashMap<String, Folder> mFolders = new HashMap<String, Folder>();
@@ -209,6 +207,9 @@ public class Pop3Store extends Store {
 
     public Pop3Store(Account account) throws MessagingException {
         super(account);
+
+        // TODO: is this okay?
+        mClientCertificateAlias = mAccount.getClientCertificateAlias();
 
         ServerSettings settings;
         try {
@@ -301,11 +302,7 @@ public class Pop3Store extends Store {
             try {
                 SocketAddress socketAddress = new InetSocketAddress(mHost, mPort);
                 if (mConnectionSecurity == ConnectionSecurity.SSL_TLS_REQUIRED) {
-                    SSLContext sslContext = SSLContext.getInstance("TLS");
-                    sslContext.init(null,
-                            new TrustManager[] { TrustManagerFactory.get(mHost,
-                                    mPort) }, new SecureRandom());
-                    mSocket = TrustedSocketFactory.createSocket(sslContext);
+                    mSocket = SslHelper.createSslSocket(mHost, mPort, mClientCertificateAlias);
                 } else {
                     mSocket = new Socket();
                 }
@@ -327,13 +324,8 @@ public class Pop3Store extends Store {
                     if (mCapabilities.stls) {
                         executeSimpleCommand(STLS_COMMAND);
 
-                        SSLContext sslContext = SSLContext.getInstance("TLS");
-                        sslContext.init(null,
-                                new TrustManager[] { TrustManagerFactory.get(
-                                        mHost, mPort) },
-                                new SecureRandom());
-                        mSocket = TrustedSocketFactory.createSocket(sslContext, mSocket, mHost,
-                                mPort, true);
+                        mSocket = SslHelper.createStartTlsSocket(mSocket, mHost, mPort, true,
+                                mClientCertificateAlias);
                         mSocket.setSoTimeout(Store.SOCKET_READ_TIMEOUT);
                         mIn = new BufferedInputStream(mSocket.getInputStream(), 1024);
                         mOut = new BufferedOutputStream(mSocket.getOutputStream(), 512);
@@ -372,10 +364,23 @@ public class Pop3Store extends Store {
                     }
                     break;
 
+                case EXTERNAL:
+                    if (mCapabilities.external) {
+                            executeSimpleCommand(
+                                    String.format("AUTHENTICATE EXTERNAL %s",
+                                            Utility.base64Encode(mUsername)), false);
+                        } else {
+                            throw new MessagingException(
+                                    "EXTERNAL authentication not advertised by server");
+                        }
+                    break;
+
                 default:
                     throw new MessagingException(
                             "Unhandled authentication method found in the server settings (bug).");
                 }
+            } catch (SSLHandshakeException e) {
+                throw new ClientCertificateRequiredException(e);
             } catch (SSLException e) {
                 throw new CertificateValidationException(e.getMessage(), e);
             } catch (GeneralSecurityException gse) {
@@ -1046,6 +1051,8 @@ public class Pop3Store extends Store {
                         capabilities.authPlain = true;
                     } else if (response.equals(AUTH_CRAM_MD5_CAPABILITY)) {
                         capabilities.cramMD5 = true;
+                    } else if (response.equals(AUTH_EXTERNAL_CAPABILITY)) {
+                        capabilities.external = true;
                     }
                 }
             } catch (MessagingException e) {
@@ -1193,15 +1200,17 @@ public class Pop3Store extends Store {
         public boolean stls;
         public boolean top;
         public boolean uidl;
+        public boolean external;
 
         @Override
         public String toString() {
-            return String.format("CRAM-MD5 %b, PLAIN %b, STLS %b, TOP %b, UIDL %b",
+            return String.format("CRAM-MD5 %b, PLAIN %b, STLS %b, TOP %b, UIDL %b, EXTERNAL %b",
                                  cramMD5,
                                  authPlain,
                                  stls,
                                  top,
-                                 uidl);
+                                 uidl,
+                                 external);
         }
     }
 

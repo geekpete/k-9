@@ -2,6 +2,7 @@
 package com.fsck.k9.mail.transport;
 
 import android.util.Log;
+
 import com.fsck.k9.Account;
 import com.fsck.k9.K9;
 import com.fsck.k9.mail.*;
@@ -13,12 +14,10 @@ import com.fsck.k9.mail.filter.PeekableInputStream;
 import com.fsck.k9.mail.filter.SmtpDataStuffing;
 import com.fsck.k9.mail.internet.MimeUtility;
 import com.fsck.k9.mail.store.LocalStore.LocalMessage;
-import com.fsck.k9.net.ssl.TrustManagerFactory;
-import com.fsck.k9.net.ssl.TrustedSocketFactory;
+import com.fsck.k9.net.ssl.SslHelper;
 
-import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLException;
-import javax.net.ssl.TrustManager;
+import javax.net.ssl.SSLHandshakeException;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -27,9 +26,7 @@ import java.io.OutputStream;
 import java.io.UnsupportedEncodingException;
 import java.net.*;
 import java.security.GeneralSecurityException;
-import java.security.SecureRandom;
 import java.security.cert.CertificateException;
-
 import java.util.*;
 
 public class SmtpTransport extends Transport {
@@ -170,6 +167,7 @@ public class SmtpTransport extends Transport {
     int mPort;
     String mUsername;
     String mPassword;
+    String mClientCertificateAlias;
     AuthType mAuthType;
     ConnectionSecurity mConnectionSecurity;
     Socket mSocket;
@@ -179,6 +177,9 @@ public class SmtpTransport extends Transport {
     private int mLargestAcceptableMessage;
 
     public SmtpTransport(Account account) throws MessagingException {
+        // TODO: is this okay?
+        mClientCertificateAlias = account.getClientCertificateAlias();
+
         ServerSettings settings;
         try {
             settings = decodeUri(account.getTransportUri());
@@ -205,12 +206,7 @@ public class SmtpTransport extends Transport {
                 try {
                     SocketAddress socketAddress = new InetSocketAddress(addresses[i], mPort);
                     if (mConnectionSecurity == ConnectionSecurity.SSL_TLS_REQUIRED) {
-                        SSLContext sslContext = SSLContext.getInstance("TLS");
-                        sslContext.init(null,
-                                new TrustManager[] { TrustManagerFactory.get(
-                                        mHost, mPort) },
-                                new SecureRandom());
-                        mSocket = TrustedSocketFactory.createSocket(sslContext);
+                        mSocket = SslHelper.createSslSocket(mHost, mPort, mClientCertificateAlias);
                         mSocket.connect(socketAddress, SOCKET_CONNECT_TIMEOUT);
                         secureConnection = true;
                     } else {
@@ -264,12 +260,9 @@ public class SmtpTransport extends Transport {
                 if (extensions.containsKey("STARTTLS")) {
                     executeSimpleCommand("STARTTLS");
 
-                    SSLContext sslContext = SSLContext.getInstance("TLS");
-                    sslContext.init(null,
-                            new TrustManager[] { TrustManagerFactory.get(mHost,
-                                    mPort) }, new SecureRandom());
-                    mSocket = TrustedSocketFactory.createSocket(sslContext, mSocket, mHost,
-                              mPort, true);
+                    mSocket = SslHelper.createStartTlsSocket(mSocket, mHost, mPort, true,
+                            mClientCertificateAlias);
+
                     mIn = new PeekableInputStream(new BufferedInputStream(mSocket.getInputStream(),
                                                   1024));
                     mOut = new BufferedOutputStream(mSocket.getOutputStream(), 1024);
@@ -379,6 +372,8 @@ public class SmtpTransport extends Transport {
                     throw new MessagingException("Unhandled authentication method found in the server settings (bug).");
                 }
             }
+        } catch (SSLHandshakeException e) {
+            throw new ClientCertificateRequiredException(e);
         } catch (SSLException e) {
             throw new CertificateValidationException(e.getMessage(), e);
         } catch (GeneralSecurityException gse) {

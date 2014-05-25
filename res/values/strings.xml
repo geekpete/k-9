@@ -373,6 +373,7 @@ Please submit bug reports, contribute new features and ask questions at
     <string name="account_setup_auth_type_normal_password">Normal password</string>
     <string name="account_setup_auth_type_insecure_password">Password, transmitted insecurely</string>
     <string name="account_setup_auth_type_encrypted_password">Encrypted password</string>
+    <string name="account_setup_auth_type_tls_client_certificate">TLS Client Certificate</string>
 
     <string name="account_setup_incoming_title">Incoming server settings</string>
     <string name="account_setup_incoming_username_label">Username</string>
@@ -1115,5 +1116,14 @@ Please submit bug reports, contribute new features and ask questions at
     <string name="openpgp_get_key">Lookup missing key</string>
     <string name="openpgp_error">OpenPGP Error:</string>
     <string name="openpgp_user_id">User Id</string>
+
+    <!-- === TLS Client Certificate authentication specific ================================================================== -->
+    <string name="account_setup_use_ccert_label">Use Client Certificate Authentication</string>
+    <string name="account_setup_failed_dlg_ccert_required">Current settings require a valid client certificate to be selected.</string>
+
+    <string name="no_ccerts">You don\'t have any valid certificates.\nDo you want to install any?</string>
+    <string name="do_you_want_to_pick_ccert">This server requires a client side certificate. Select one now?</string>
+    <string name="do_you_want_to_pick_ccert_error">Can\'t log in.\nDo you want to pick another client certificate?</string>
+    <string name="ccert_not_available">Client certificate authentication is not supported for Android versions below 4.0</string>
 
 </resources>

@@ -28,6 +28,7 @@ import com.fsck.k9.mail.store.Pop3Store;
 import com.fsck.k9.mail.store.WebDavStore;
 import com.fsck.k9.mail.store.ImapStore.ImapStoreSettings;
 import com.fsck.k9.mail.store.WebDavStore.WebDavStoreSettings;
+import com.fsck.k9.net.ssl.SslHelper;
 import com.fsck.k9.service.MailService;
 
 import java.io.UnsupportedEncodingException;
@@ -51,6 +52,7 @@ public class AccountSetupIncoming extends K9Activity implements OnClickListener 
     private String mStoreType;
     private EditText mUsernameView;
     private EditText mPasswordView;
+    private TextView mPasswordViewLabel;
     private EditText mServerView;
     private EditText mPortView;
     private Spinner mSecurityTypeView;
@@ -97,6 +99,7 @@ public class AccountSetupIncoming extends K9Activity implements OnClickListener 
 
         mUsernameView = (EditText)findViewById(R.id.account_username);
         mPasswordView = (EditText)findViewById(R.id.account_password);
+        mPasswordViewLabel = (TextView)findViewById(R.id.account_password_label);
         TextView serverLabelView = (TextView) findViewById(R.id.account_server_label);
         mServerView = (EditText)findViewById(R.id.account_server);
         mPortView = (EditText)findViewById(R.id.account_port);
@@ -127,26 +130,9 @@ public class AccountSetupIncoming extends K9Activity implements OnClickListener 
             }
         });
 
-        mAuthTypeAdapter = AuthType.getArrayAdapter(this);
+        mAuthTypeAdapter = AuthType.getArrayAdapter(this, SslHelper.isClientCertificateSupportAvailable());
         mAuthTypeView.setAdapter(mAuthTypeAdapter);
 
-        /*
-         * Calls validateFields() which enables or disables the Next button
-         * based on the fields' validity.
-         */
-        TextWatcher validationTextWatcher = new TextWatcher() {
-            public void afterTextChanged(Editable s) {
-                validateFields();
-            }
-
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
-                /* unused */
-            }
-
-            public void onTextChanged(CharSequence s, int start, int before, int count) {
-                /* unused */
-            }
-        };
         mUsernameView.addTextChangedListener(validationTextWatcher);
         mPasswordView.addTextChangedListener(validationTextWatcher);
         mServerView.addTextChangedListener(validationTextWatcher);
@@ -256,9 +242,8 @@ public class AccountSetupIncoming extends K9Activity implements OnClickListener 
                 throw new Exception("Unknown account type: " + mAccount.getStoreUri());
             }
 
-            ArrayAdapter<ConnectionSecurity> securityTypesAdapter = new ArrayAdapter<ConnectionSecurity>(this,
-                    android.R.layout.simple_spinner_item, mConnectionSecurityChoices);
-            securityTypesAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+            ArrayAdapter<ConnectionSecurity> securityTypesAdapter = 
+                    ConnectionSecurity.getArrayAdapter(this, mConnectionSecurityChoices);
             mSecurityTypeView.setAdapter(securityTypesAdapter);
 
             // Select currently configured security type
@@ -278,7 +263,20 @@ public class AccountSetupIncoming extends K9Activity implements OnClickListener 
                 @Override
                 public void onItemSelected(AdapterView<?> parent, View view, int position,
                         long id) {
+                    // this indirectly triggers validateFields because the port text is watched
                     updatePortFromSecurityType();
+                }
+
+                @Override
+                public void onNothingSelected(AdapterView<?> parent) { /* unused */ }
+            });
+
+            mAuthTypeView.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+                @Override
+                public void onItemSelected(AdapterView<?> parent, View view, int position,
+                        long id) {
+                    // shows/hides password field for client certificate authentication
+                    validateFields();
                 }
 
                 @Override
@@ -314,11 +312,34 @@ public class AccountSetupIncoming extends K9Activity implements OnClickListener 
     }
 
     private void validateFields() {
+        AuthType authType = (AuthType) mAuthTypeView.getSelectedItem();
+        boolean isAuthTypeExternal = AuthType.EXTERNAL.equals(authType);
+
+        // if user wants to user external authentication only, then we need to
+        // hide password field, since it won't be used
+        if (isAuthTypeExternal) {
+            mPasswordView.removeTextChangedListener(validationTextWatcher);
+            mPasswordView.setText("");
+            mPasswordView.addTextChangedListener(validationTextWatcher);
+
+            // hide password fields
+            mPasswordView.setVisibility(View.GONE);
+            mPasswordViewLabel.setVisibility(View.GONE);
+        } else {
+            // show password fields
+            mPasswordView.setVisibility(View.VISIBLE);
+            mPasswordViewLabel.setVisibility(View.VISIBLE);
+        }
+
+        ConnectionSecurity connectionSecurity = (ConnectionSecurity) mSecurityTypeView.getSelectedItem();
+        boolean hasConnectionSecurity = !connectionSecurity.equals(ConnectionSecurity.NONE);
+
         mNextButton
         .setEnabled(Utility.requiredFieldValid(mUsernameView)
-                    && Utility.requiredFieldValid(mPasswordView)
+                    && (isAuthTypeExternal || Utility.requiredFieldValid(mPasswordView))
                     && Utility.domainFieldValid(mServerView)
-                    && Utility.requiredFieldValid(mPortView));
+                    && Utility.requiredFieldValid(mPortView)
+                    && (!isAuthTypeExternal || hasConnectionSecurity));
         Utility.setCompoundDrawablesAlpha(mNextButton, mNextButton.isEnabled() ? 255 : 128);
     }
 
@@ -444,7 +465,10 @@ public class AccountSetupIncoming extends K9Activity implements OnClickListener 
             mAccount.setCompression(Account.TYPE_OTHER, mCompressionOther.isChecked());
             mAccount.setSubscribedFoldersOnly(mSubscribedFoldersOnly.isChecked());
 
-            AccountSetupCheckSettings.actionCheckSettings(this, mAccount, CheckDirection.INCOMING);
+            //reset user certificate so he will be able to set another one
+            mAccount.setClientCertificateAlias(null);
+
+            AccountSetupCheckSettings.actionCheckSettings(this, mAccount, CheckDirection.INCOMING, false);
         } catch (Exception e) {
             failure(e);
         }
@@ -470,4 +494,22 @@ public class AccountSetupIncoming extends K9Activity implements OnClickListener 
         Toast toast = Toast.makeText(getApplication(), toastText, Toast.LENGTH_LONG);
         toast.show();
     }
+
+    /*
+     * Calls validateFields() which enables or disables the Next button
+     * based on the fields' validity.
+     */
+    TextWatcher validationTextWatcher = new TextWatcher() {
+        public void afterTextChanged(Editable s) {
+            validateFields();
+        }
+
+        public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            /* unused */
+        }
+
+        public void onTextChanged(CharSequence s, int start, int before, int count) {
+            /* unused */
+        }
+    };
 }

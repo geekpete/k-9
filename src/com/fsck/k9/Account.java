@@ -87,7 +87,9 @@ public class Account implements BaseAccount {
 
     public static final String ACCOUNT_DESCRIPTION_KEY = "description";
     public static final String STORE_URI_KEY = "storeUri";
+    public static final String STORE_CCERT_KEY = "storeClientCertificateAlias";
     public static final String TRANSPORT_URI_KEY = "transportUri";
+    public static final String TRANSPORT_CCERT_KEY = "transportClientCertificateAlias";
 
     public static final String IDENTITY_NAME_KEY = "name";
     public static final String IDENTITY_EMAIL_KEY = "email";
@@ -149,6 +151,7 @@ public class Account implements BaseAccount {
 
     private final String mUuid;
     private String mStoreUri;
+    private String mClientCertificateAlias;
 
     /**
      * Storage provider ID, used to locate and manage the underlying DB/file
@@ -370,6 +373,7 @@ public class Account implements BaseAccount {
         SharedPreferences prefs = preferences.getPreferences();
 
         mStoreUri = Utility.base64Decode(prefs.getString(mUuid + ".storeUri", null));
+        mClientCertificateAlias = prefs.getString(mUuid + ".clientCertificateAlias", null);
         mLocalStorageProviderId = prefs.getString(mUuid + ".localStorageProvider", StorageManager.getInstance(K9.app).getDefaultProviderId());
         mTransportUri = Utility.base64Decode(prefs.getString(mUuid + ".transportUri", null));
         mDescription = prefs.getString(mUuid + ".description", null);
@@ -528,7 +532,9 @@ public class Account implements BaseAccount {
         }
 
         editor.remove(mUuid + ".storeUri");
+        editor.remove(mUuid + ".storeClientCertificateAlias");
         editor.remove(mUuid + ".transportUri");
+        editor.remove(mUuid + ".transportClientCertificateAlias");
         editor.remove(mUuid + ".description");
         editor.remove(mUuid + ".name");
         editor.remove(mUuid + ".email");
@@ -696,6 +702,7 @@ public class Account implements BaseAccount {
         }
 
         editor.putString(mUuid + ".storeUri", Utility.base64Encode(mStoreUri));
+        editor.putString(mUuid + ".clientCertificateAlias", mClientCertificateAlias);
         editor.putString(mUuid + ".localStorageProvider", mLocalStorageProviderId);
         editor.putString(mUuid + ".transportUri", Utility.base64Encode(mTransportUri));
         editor.putString(mUuid + ".description", mDescription);
@@ -910,6 +917,14 @@ public class Account implements BaseAccount {
 
     public synchronized void setStoreUri(String storeUri) {
         this.mStoreUri = storeUri;
+    }
+    
+    public synchronized String getClientCertificateAlias() {
+        return mClientCertificateAlias;
+    }
+
+    public synchronized void setClientCertificateAlias(String clientCertificateAlias) {
+        this.mClientCertificateAlias = clientCertificateAlias;
     }
 
     public synchronized String getTransportUri() {
@@ -1303,6 +1318,10 @@ public class Account implements BaseAccount {
 
     public Store getRemoteStore() throws MessagingException {
         return Store.getRemoteInstance(this);
+    }
+
+    public Store getRemoteStore(boolean reload) throws MessagingException {
+        return Store.getRemoteInstance(this, reload);
     }
 
     // It'd be great if this actually went into the store implementation
